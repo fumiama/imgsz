@@ -14,15 +14,15 @@ import (
 
 var errInvalidFormat = errors.New("webp: invalid format")
 
-// FourCC is a four character code.
-type FourCC [4]byte
+// fourCC is a four character code.
+type fourCC [4]byte
 
 var (
-	fccALPH = FourCC{'A', 'L', 'P', 'H'}
-	fccVP8  = FourCC{'V', 'P', '8', ' '}
-	fccVP8L = FourCC{'V', 'P', '8', 'L'}
-	fccVP8X = FourCC{'V', 'P', '8', 'X'}
-	fccWEBP = FourCC{'W', 'E', 'B', 'P'}
+	fccALPH = fourCC{'A', 'L', 'P', 'H'}
+	fccVP8  = fourCC{'V', 'P', '8', ' '}
+	fccVP8L = fourCC{'V', 'P', '8', 'L'}
+	fccVP8X = fourCC{'V', 'P', '8', 'X'}
+	fccWEBP = fourCC{'W', 'E', 'B', 'P'}
 )
 
 const chunkHeaderSize = 8
@@ -41,8 +41,8 @@ func u32(b []byte) uint32 {
 	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
 }
 
-// Reader reads chunks from an underlying io.Reader.
-type Reader struct {
+// webpeader reads chunks from an underlying io.webpeader.
+type webpeader struct {
 	r   io.Reader
 	err error
 
@@ -54,48 +54,48 @@ type Reader struct {
 	padded      bool
 }
 
-// NewListReader returns a LIST chunk's list type, such as "movi" or "wavl",
+// newListReader returns a LIST chunk's list type, such as "movi" or "wavl",
 // and its chunks as a *Reader.
-func NewListReader(chunkLen uint32, chunkData io.Reader) (listType FourCC, data *Reader, err error) {
+func newListReader(chunkLen uint32, chunkData io.Reader) (listType fourCC, data *webpeader, err error) {
 	if chunkLen < 4 {
-		return FourCC{}, nil, errShortChunkData
+		return fourCC{}, nil, errShortChunkData
 	}
-	z := &Reader{r: chunkData}
+	z := &webpeader{r: chunkData}
 	if _, err := io.ReadFull(chunkData, z.buf[:4]); err != nil {
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			err = errShortChunkData
 		}
-		return FourCC{}, nil, err
+		return fourCC{}, nil, err
 	}
 	z.totalLen = chunkLen - 4
-	return FourCC{z.buf[0], z.buf[1], z.buf[2], z.buf[3]}, z, nil
+	return fourCC{z.buf[0], z.buf[1], z.buf[2], z.buf[3]}, z, nil
 }
 
-// NewReader returns the RIFF stream's form type, such as "AVI " or "WAVE", and
+// newReader returns the RIFF stream's form type, such as "AVI " or "WAVE", and
 // its chunks as a *Reader.
-func NewReader(r io.Reader) (formType FourCC, data *Reader, err error) {
+func newReader(r io.Reader) (formType fourCC, data *webpeader, err error) {
 	var buf [chunkHeaderSize]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			err = errMissingRIFFChunkHeader
 		}
-		return FourCC{}, nil, err
+		return fourCC{}, nil, err
 	}
 	if buf[0] != 'R' || buf[1] != 'I' || buf[2] != 'F' || buf[3] != 'F' {
-		return FourCC{}, nil, errMissingRIFFChunkHeader
+		return fourCC{}, nil, errMissingRIFFChunkHeader
 	}
-	return NewListReader(u32(buf[4:]), r)
+	return newListReader(u32(buf[4:]), r)
 }
 
-// Next returns the next chunk's ID, length and data. It returns io.EOF if there
-// are no more chunks. The io.Reader returned becomes stale after the next Next
+// next returns the next chunk's ID, length and data. It returns io.EOF if there
+// are no more chunks. The io.Reader returned becomes stale after the next next
 // call, and should no longer be used.
 //
-// It is valid to call Next even if all of the previous chunk's data has not
+// It is valid to call next even if all of the previous chunk's data has not
 // been read.
-func (z *Reader) Next() (chunkID FourCC, chunkLen uint32, chunkData io.Reader, err error) {
+func (z *webpeader) next() (chunkID fourCC, chunkLen uint32, chunkData io.Reader, err error) {
 	if z.err != nil {
-		return FourCC{}, 0, nil, z.err
+		return fourCC{}, 0, nil, z.err
 	}
 
 	// Drain the rest of the previous chunk.
@@ -107,14 +107,14 @@ func (z *Reader) Next() (chunkID FourCC, chunkLen uint32, chunkData io.Reader, e
 			z.err = errShortChunkData
 		}
 		if z.err != nil {
-			return FourCC{}, 0, nil, z.err
+			return fourCC{}, 0, nil, z.err
 		}
 	}
 	z.chunkReader = nil
 	if z.padded {
 		if z.totalLen == 0 {
 			z.err = errListSubchunkTooLong
-			return FourCC{}, 0, nil, z.err
+			return fourCC{}, 0, nil, z.err
 		}
 		z.totalLen--
 		_, z.err = io.ReadFull(z.r, z.buf[:1])
@@ -122,33 +122,33 @@ func (z *Reader) Next() (chunkID FourCC, chunkLen uint32, chunkData io.Reader, e
 			if z.err == io.EOF {
 				z.err = errMissingPaddingByte
 			}
-			return FourCC{}, 0, nil, z.err
+			return fourCC{}, 0, nil, z.err
 		}
 	}
 
 	// We are done if we have no more data.
 	if z.totalLen == 0 {
 		z.err = io.EOF
-		return FourCC{}, 0, nil, z.err
+		return fourCC{}, 0, nil, z.err
 	}
 
 	// Read the next chunk header.
 	if z.totalLen < chunkHeaderSize {
 		z.err = errShortChunkHeader
-		return FourCC{}, 0, nil, z.err
+		return fourCC{}, 0, nil, z.err
 	}
 	z.totalLen -= chunkHeaderSize
 	if _, z.err = io.ReadFull(z.r, z.buf[:chunkHeaderSize]); z.err != nil {
 		if z.err == io.EOF || z.err == io.ErrUnexpectedEOF {
 			z.err = errShortChunkHeader
 		}
-		return FourCC{}, 0, nil, z.err
+		return fourCC{}, 0, nil, z.err
 	}
-	chunkID = FourCC{z.buf[0], z.buf[1], z.buf[2], z.buf[3]}
+	chunkID = fourCC{z.buf[0], z.buf[1], z.buf[2], z.buf[3]}
 	z.chunkLen = u32(z.buf[4:])
 	if z.chunkLen > z.totalLen {
 		z.err = errListSubchunkTooLong
-		return FourCC{}, 0, nil, z.err
+		return fourCC{}, 0, nil, z.err
 	}
 	z.padded = z.chunkLen&1 == 1
 	z.chunkReader = &chunkReader{z}
@@ -156,7 +156,7 @@ func (z *Reader) Next() (chunkID FourCC, chunkLen uint32, chunkData io.Reader, e
 }
 
 type chunkReader struct {
-	z *Reader
+	z *webpeader
 }
 
 func (c *chunkReader) Read(p []byte) (int, error) {
@@ -192,7 +192,7 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 }
 
 func decodewebp(r io.Reader) (Size, error) {
-	formType, riffReader, err := NewReader(r)
+	formType, riffReader, err := newReader(r)
 	if err != nil {
 		return Size{}, err
 	}
@@ -208,7 +208,7 @@ func decodewebp(r io.Reader) (Size, error) {
 		buf            [10]byte
 	)
 	for {
-		chunkID, chunkLen, chunkData, err := riffReader.Next()
+		chunkID, chunkLen, chunkData, err := riffReader.next()
 		if err == io.EOF {
 			err = errInvalidFormat
 		}
