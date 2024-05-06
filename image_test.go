@@ -57,4 +57,30 @@ func TestSizes(t *testing.T) {
 		t.Fatal(sz, n)
 	}
 	f.Close()
+
+	f, err = os.Open("testdata/test.bmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sz, n, err = DecodeSize(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sz.Width != 677 || sz.Height != 487 || n != "bmp" {
+		t.Fatal(sz, n)
+	}
+	f.Close()
+
+	f, err = os.Open("testdata/test.tiff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sz, n, err = DecodeSize(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sz.Width != 1032 || sz.Height != 1457 || n != "tiff" {
+		t.Fatal(sz, n)
+	}
+	f.Close()
 }

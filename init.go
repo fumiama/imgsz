@@ -16,4 +16,7 @@ func init() {
 		return Size{d.width, d.height}, nil
 	})
 	RegisterFormat("webp", "RIFF????WEBPVP8", decodewebp)
+	RegisterFormat("bmp", "BM????\x00\x00\x00\x00", decodebmp)
+	RegisterFormat("tiff", leHeader, decodetiff)
+	RegisterFormat("tiff", beHeader, decodetiff)
 }
