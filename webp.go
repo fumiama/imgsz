@@ -6,10 +6,13 @@ package imgsz
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
+	"image"
 	"io"
-	"io/ioutil"
 	"math"
+
+	"golang.org/x/image/vp8l"
 )
 
 var errInvalidFormat = errors.New("webp: invalid format")
@@ -102,7 +105,7 @@ func (z *webpeader) next() (chunkID fourCC, chunkLen uint32, chunkData io.Reader
 	if z.chunkLen != 0 {
 		want := z.chunkLen
 		var got int64
-		got, z.err = io.Copy(ioutil.Discard, z.chunkReader)
+		got, z.err = io.Copy(io.Discard, z.chunkReader)
 		if z.err == nil && uint32(got) != want {
 			z.err = errShortChunkData
 		}
@@ -202,6 +205,7 @@ func decodewebp(r io.Reader) (Size, error) {
 
 	var (
 		alpha          []byte
+		alphaStride    int
 		wantAlpha      bool
 		widthMinusOne  uint32
 		heightMinusOne uint32
@@ -229,6 +233,11 @@ func decodewebp(r io.Reader) (Size, error) {
 				}
 				return Size{}, err
 			}
+			alpha, alphaStride, err = readAlpha(chunkData, widthMinusOne, heightMinusOne, buf[0]&0x03)
+			if err != nil {
+				return Size{}, err
+			}
+			unfilterAlpha(alpha, alphaStride, (buf[0]>>2)&0x03)
 
 		case fccVP8:
 			if wantAlpha || int32(chunkLen) < 0 {
@@ -362,4 +371,107 @@ func decodeVP8LHeader(r io.Reader) (w int32, h int32, err error) {
 		return 0, 0, errors.New("vp8l: invalid version")
 	}
 	return int32(width), int32(height), nil
+}
+
+func readAlpha(chunkData io.Reader, widthMinusOne, heightMinusOne uint32, compression byte) (
+	alpha []byte, alphaStride int, err error) {
+
+	switch compression {
+	case 0:
+		w := int(widthMinusOne) + 1
+		h := int(heightMinusOne) + 1
+		alpha = make([]byte, w*h)
+		if _, err := io.ReadFull(chunkData, alpha); err != nil {
+			return nil, 0, err
+		}
+		return alpha, w, nil
+
+	case 1:
+		// Read the VP8L-compressed alpha values. First, synthesize a 5-byte VP8L header:
+		// a 1-byte magic number, a 14-bit widthMinusOne, a 14-bit heightMinusOne,
+		// a 1-bit (ignored, zero) alphaIsUsed and a 3-bit (zero) version.
+		// TODO(nigeltao): be more efficient than decoding an *image.NRGBA just to
+		// extract the green values to a separately allocated []byte. Fixing this
+		// will require changes to the vp8l package's API.
+		if widthMinusOne > 0x3fff || heightMinusOne > 0x3fff {
+			return nil, 0, errors.New("webp: invalid format")
+		}
+		alphaImage, err := vp8l.Decode(io.MultiReader(
+			bytes.NewReader([]byte{
+				0x2f, // VP8L magic number.
+				uint8(widthMinusOne),
+				uint8(widthMinusOne>>8) | uint8(heightMinusOne<<6),
+				uint8(heightMinusOne >> 2),
+				uint8(heightMinusOne >> 10),
+			}),
+			chunkData,
+		))
+		if err != nil {
+			return nil, 0, err
+		}
+		// The green values of the inner NRGBA image are the alpha values of the
+		// outer NYCbCrA image.
+		pix := alphaImage.(*image.NRGBA).Pix
+		alpha = make([]byte, len(pix)/4)
+		for i := range alpha {
+			alpha[i] = pix[4*i+1]
+		}
+		return alpha, int(widthMinusOne) + 1, nil
+	}
+	return nil, 0, errInvalidFormat
+}
+
+func unfilterAlpha(alpha []byte, alphaStride int, filter byte) {
+	if len(alpha) == 0 || alphaStride == 0 {
+		return
+	}
+	switch filter {
+	case 1: // Horizontal filter.
+		for i := 1; i < alphaStride; i++ {
+			alpha[i] += alpha[i-1]
+		}
+		for i := alphaStride; i < len(alpha); i += alphaStride {
+			// The first column is equivalent to the vertical filter.
+			alpha[i] += alpha[i-alphaStride]
+
+			for j := 1; j < alphaStride; j++ {
+				alpha[i+j] += alpha[i+j-1]
+			}
+		}
+
+	case 2: // Vertical filter.
+		// The first row is equivalent to the horizontal filter.
+		for i := 1; i < alphaStride; i++ {
+			alpha[i] += alpha[i-1]
+		}
+
+		for i := alphaStride; i < len(alpha); i++ {
+			alpha[i] += alpha[i-alphaStride]
+		}
+
+	case 3: // Gradient filter.
+		// The first row is equivalent to the horizontal filter.
+		for i := 1; i < alphaStride; i++ {
+			alpha[i] += alpha[i-1]
+		}
+
+		for i := alphaStride; i < len(alpha); i += alphaStride {
+			// The first column is equivalent to the vertical filter.
+			alpha[i] += alpha[i-alphaStride]
+
+			// The interior is predicted on the three top/left pixels.
+			for j := 1; j < alphaStride; j++ {
+				c := int(alpha[i+j-alphaStride-1])
+				b := int(alpha[i+j-alphaStride])
+				a := int(alpha[i+j-1])
+				x := a + b - c
+				if x < 0 {
+					x = 0
+				} else if x > 255 {
+					x = 255
+				}
+				alpha[i+j] += uint8(x)
+			}
+		}
+	}
 }
